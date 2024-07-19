@@ -21,6 +21,10 @@ driver:
       display-name: Token
       type: string
       required: false
+    - name: db-info-path
+      display-name: Path to DB info API
+      type: string
+      required: false
     - name: tables
       display-name: Table Definitions
       type: text

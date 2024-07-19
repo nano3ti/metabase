@@ -8,10 +8,46 @@
    [metabase.models.secret :as secret]
    [metabase.query-processor.store :as qp.store]))
 
+(defn- make-headers [details]
+  (let [token (:auth-token details)]
+    (if (and token (not (string/blank? token)))
+      {:authorization (str "Bearer " token)}
+      {})))
+
+(defn- to-mb-table [table]
+  (let [query (:query table)]
+    (if query
+      (let [mb-table (dissoc table :query)
+            columns (:columns mb-table)
+            columns-with-query (map (fn [col]
+                                      (assoc col :custom {:query query})) columns)]
+        (assoc mb-table :columns columns-with-query))
+      table)))
+
+(defn- fetch-table-defs [database]
+  (let [details (:details database)
+        db-info-path (:db-info-path details)
+        _ (println "db-info-path: " db-info-path)]
+    (when db-info-path
+      (let [url (str (:url details) db-info-path)
+            _ (println "url: : " url)
+            response (http/request {:url url
+                                    :method :get
+                                    :headers (make-headers details)
+                                    :as :json})
+            status (:status response)]
+        (when (not= 200 status)
+          (throw (Exception. "Table defs request error: " status)))
+        (let [resp-data (:body response)]
+          (:tables resp-data))))))
+
 (defn- get-table-defs [database]
   (let [table-defs (:tables (:details database))
-        parsed-table-defs (json/parse-string table-defs true)]
-    parsed-table-defs))
+        parsed-table-defs (json/parse-string table-defs true)
+        _ (println "get-table-defs")]
+    (concat
+     (or parsed-table-defs [])
+     (or (fetch-table-defs database) []))))
 
 (defn- get-table-def [database table-name]
   (let [table-defs (get-table-defs database)]
@@ -19,6 +55,9 @@
             (fn [table-def]
               (= table-name (:name table-def)))
             table-defs))))
+
+(defn- table-def-to-mb-table-def [table-def]
+  (map to-mb-table table-def))
 
 (defn- parse-dtype
   [dtype]
@@ -30,7 +69,7 @@
         tables-meta (map (fn [table-def]
                            {:name (:name table-def)
                             :schema nil}) table-defs)]
-    {:tables (set tables-meta)}))
+    {:tables (set (map table-def-to-mb-table-def tables-meta))}))
 
 (defn- parse-fields
   [fields]
@@ -44,7 +83,7 @@
   [database table]
   (let [table-name (:name table)
         table-def (get-table-def database table-name)]
-    (if table-def
+    (when table-def
       {:name   table-name
        :schema nil
        :fields (set (parse-fields (:columns table-def)))})))
@@ -54,20 +93,6 @@
                        (qp.store/metadata-provider)
                        (:source-table (:query query)))]
     {:table table}))
-
-;; (defn- make-headers [details]
-;;   (let [token (-> details
-;;                   (secret/db-details-prop->secret-map "auth-token")
-;;                   secret/value->string)]
-;;     (if (and token (not (string/blank? token)))
-;;       {:authorization (str "Bearer " token)}
-;;       {})))
-
-(defn- make-headers [details]
-  (let [token (:auth-token details)]
-    (if (and token (not (string/blank? token)))
-      {:authorization (str "Bearer " token)}
-      {})))
 
 (defn- parse-method [method]
   (when method
