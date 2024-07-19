@@ -69,7 +69,7 @@
         tables-meta (map (fn [table-def]
                            {:name (:name table-def)
                             :schema nil}) table-defs)]
-    {:tables (set (map table-def-to-mb-table-def tables-meta))}))
+    {:tables (set tables-meta)}))
 
 (defn- parse-fields
   [fields]
