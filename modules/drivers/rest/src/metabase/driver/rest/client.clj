@@ -5,7 +5,6 @@
    [clj-http.client :as http]
    [clojure.string :as string]
    [metabase.lib.metadata :as lib.metadata]
-   [metabase.models.secret :as secret]
    [metabase.query-processor.store :as qp.store]))
 
 (defn- make-headers [details]
@@ -14,23 +13,11 @@
       {:authorization (str "Bearer " token)}
       {})))
 
-(defn- to-mb-table [table]
-  (let [query (:query table)]
-    (if query
-      (let [mb-table (dissoc table :query)
-            columns (:columns mb-table)
-            columns-with-query (map (fn [col]
-                                      (assoc col :custom {:query query})) columns)]
-        (assoc mb-table :columns columns-with-query))
-      table)))
-
 (defn- fetch-table-defs [database]
   (let [details (:details database)
-        db-info-path (:db-info-path details)
-        _ (println "db-info-path: " db-info-path)]
+        db-info-path (:db-info-path details)]
     (when db-info-path
       (let [url (str (:url details) db-info-path)
-            _ (println "url: : " url)
             response (http/request {:url url
                                     :method :get
                                     :headers (make-headers details)
@@ -43,8 +30,7 @@
 
 (defn- get-table-defs [database]
   (let [table-defs (:tables (:details database))
-        parsed-table-defs (json/parse-string table-defs true)
-        _ (println "get-table-defs")]
+        parsed-table-defs (json/parse-string table-defs true)]
     (concat
      (or parsed-table-defs [])
      (or (fetch-table-defs database) []))))
@@ -55,9 +41,6 @@
             (fn [table-def]
               (= table-name (:name table-def)))
             table-defs))))
-
-(defn- table-def-to-mb-table-def [table-def]
-  (map to-mb-table table-def))
 
 (defn- parse-dtype
   [dtype]
@@ -123,7 +106,7 @@
 (defn- fetch-predefined-table
   [database table-name]
   (let [table-def (get-table-def database table-name)]
-    (if table-def
+    (when table-def
       (query-api database (:query table-def)))))
 
 (defn execute-query
@@ -134,3 +117,15 @@
     (if api-query
       (query-api database (json/parse-string api-query true))
       (fetch-predefined-table database (:table native-query)))))
+
+(defn- substitute-parameters [parameters query-string]
+  (reduce (fn [qs {value :value [_ [_ template-tag]] :target}]
+            (string/replace qs (str "{{" template-tag "}}") (str value)))
+          query-string parameters))
+
+(defn substitute-native-parameters [inner-query]
+  (let [parameters (:parameters inner-query)
+        query-string (:query inner-query)]
+    (if (and (seq parameters) query-string)
+      {:query (substitute-parameters parameters query-string)}
+      {:query query-string})))
